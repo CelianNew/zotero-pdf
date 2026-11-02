@@ -1,0 +1,6 @@
+interface:
+  display_name: "Zotero PDF"
+  short_description: "为 Zotero 文献保存 PDF，并自动打标签、归类"
+  default_prompt: "使用 $zotero-pdf 为指定 Zotero 文献保存可合法获取的 PDF，并依据证据自动打标签、归入合适的 collection。"
+  icon_small: "./assets/zotero-pdf.svg"
+  icon_large: "./assets/zotero-pdf.svg"
