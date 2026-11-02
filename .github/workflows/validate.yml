@@ -27,4 +27,10 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: Check helper CLI
-        run: python scripts/zotero_pdf.py --help
+        run: |
+          python scripts/zotero_pdf.py --help
+          python scripts/zotero_pdf.py resolve --help
+          python scripts/zotero_pdf.py inspect --help
+          python scripts/zotero_pdf.py attach --help
+          python scripts/zotero_pdf.py verify-attachment --help
+          python scripts/zotero_pdf.py classify --help

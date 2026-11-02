@@ -1,90 +1,134 @@
 ---
 name: zotero-pdf
-description: Find and attach lawful or open-access paper PDFs to existing Zotero 10 items, then add evidence-based tags and collection membership. 为 Zotero 文献查找并保存可合法获取的 PDF，写入后自动打标签和归类。优先匹配 DOI；只使用开放获取或用户有权访问的来源。
+description: Attach lawfully accessible PDFs to existing Zotero 10 items through the local API and add evidence-grounded tags and collection membership. Use for paper PDF attachment, attachment verification, or automatic Zotero classification. 为 Zotero 文献保存合法获取的论文 PDF，并依据证据自动打标签和归类。
 license: MIT
 ---
 
-# Zotero 论文 PDF
+# Zotero PDF
 
-本技能负责从可靠来源取得论文 PDF、保存为现有 Zotero 条目的本地附件，并依据题录与全文证据完成自动分类。Zotero 搜索和基础库管理使用 Zotero 技能；桌面启动、窗口定位和授权窗口处理使用 Computer Use。
+Use this skill to attach a lawfully accessible paper PDF to an existing Zotero item, verify the stored file, and classify the item from the evidence actually available. The helper calls Zotero Desktop's local API directly; the separate `zotero` skill, `computer-use` skill, and Zotero browser connector are optional.
 
-下文中的 `<SKILL_DIR>` 指包含本 `SKILL.md` 的绝对目录；使用 helper 命令前先将其替换为本机实际路径。
+In commands below, replace `<SKILL_DIR>` with the absolute directory containing this `SKILL.md`.
 
-## 写入流程
+## Required Checks
 
-1. 用 Zotero 技能定位目标条目，记录条目 key、标题、作者、DOI、当前 tags 和 collections。优先用 DOI 唯一匹配；无 DOI 时至少用标题与作者交叉核验。
-2. 查找可合法访问的 PDF。优先论文官方开放获取页面、作者或机构仓储、arXiv、PubMed Central 等可信来源。不得绕过付费墙、登录限制或访问控制。
-3. 下载到临时位置，确认文件头为 `%PDF-`，并核对标题、作者、DOI 或稳定标识。元数据冲突或仅标题相似时停止写入。
-4. 用 Zotero 技能检查桌面端和本地 API。Zotero 需运行且版本不低于 10，本地 API 需可用。需要启动或聚焦 Zotero 时，先阅读并遵循 `computer-use` 技能：
-   - 使用 Computer Use 查找现有 Zotero 窗口；应用未运行时从已安装应用启动它。
-   - 不通过 shell、`taskkill`、强制重启或伪造窗口句柄启动 Zotero。
-   - 启动后重新读取 Zotero 窗口；不能把启动器、空白窗口或授权弹窗误当成可操作主窗口。
-5. 附件写入只对已完成核验的父条目执行：
+- Use Zotero Desktop 10 or newer with **Settings → Advanced → Allow other applications on this computer to communicate with Zotero** enabled.
+- Identify the parent item by DOI, or by an exact title plus author evidence. If several Zotero items still match exactly, stop and ask the user to disambiguate by item key.
+- Prefer a publisher open-access PDF, author or institutional repository copy, arXiv, or PubMed Central. Never bypass a paywall, login, licence, or access control.
+- Do not edit bibliographic fields, create duplicate parent items, replace an existing PDF, or create a collection.
+- Never print, store, or put a Zotero API key in a command line, file, log, or final response.
+- Treat no PDF as a valid research outcome. Do not create a failed or missing-PDF tag unless the user explicitly asks for a missing-item ledger.
 
-   ```powershell
-   python "<SKILL_DIR>\scripts\zotero_pdf.py" attach `
-     --item-key ITEM_KEY `
-     --pdf "C:\path\paper.pdf" `
-     --source-url "https://..." `
-     --doi 10.xxxx/... `
-     --title "Exact Zotero title"
-   ```
+## Resolve the Item
 
-   `--doi` 或 `--title` 至少提供一个。同一 helper 进程复用一个授权 key；不要把 API key 写入命令、日志、说明或临时文件。
-6. Zotero 可能弹出“本地 API 授权”。用 Computer Use 查找并聚焦该窗口，然后让用户完成安全授权：
-   - 不得自动点击“允许”“拒绝”或“始终允许”，也不得绕过系统、应用或凭据授权。
-   - 优先请用户选择“始终允许”，避免每条文献重复授权；用户已明确完成授权后，直接继续，不重复询问。
-   - 若 `attach` 超时，先检查 Zotero 是否仍显示授权窗口，并检查父条目是否会留下空附件。不要在授权未完成时循环重试。
-   - 授权完成后最多重试一次；仍失败则报告具体写入阶段并保留临时 PDF。
-7. 每条新增题录或 PDF 写入成功后，立即自动打标签和归类，不等待额外确认。先运行 `inspect`，读取该条目现有 `tags` 与 `collections`，并读取 `libraryTags` 和带层级路径的 `libraryCollections`；再从题录、摘要和必要的论文正文中归纳稳定主题：
+Use the helper for DOI/title/author matching before writing:
 
-   ```powershell
-   python "<SKILL_DIR>\scripts\zotero_pdf.py" inspect `
-     --item-key ITEM_KEY `
-     --title "Exact Zotero title"
-   ```
-   - 优先复用已有标签；没有合适标签时才创建简洁的新标签。
-   - 通常添加 3 到 6 个有证据支持的标签，覆盖研究主题、方法或应用，以及关键参与方式；不要添加作者、年份或未经支持的推断。
-   - 用户明确给出目标 folder 时使用该 collection；否则选择现有 collection 中最精确的主题入口。不要仅因名称相似就扩大分类，也不要在未要求时新建 collection。
-   - 添加 collection 和 tags 时保留条目原有归属与标签。
-8. 执行自动分类。`--title` 或 `--doi` 仍用于防止写错条目；`--tag` 可重复：
+```powershell
+python "<SKILL_DIR>\scripts\zotero_pdf.py" resolve `
+  --doi "10.xxxx/example" `
+  --author "Family, Given"
+```
 
-   ```powershell
-   python "<SKILL_DIR>\scripts\zotero_pdf.py" classify `
-     --item-key ITEM_KEY `
-     --title "Exact Zotero title" `
-     --collection-name "目标 collection" `
-     --tag "研究主题" `
-     --tag "方法" `
-     --tag "方法类别/具体参与方式"
-   ```
+An exact title can replace `--doi`; add `--author` whenever available. Then inspect the item and its attachments:
 
-   先运行同一命令并加 `--dry-run` 可检查待新增项。正式写入后 helper 会回读 tags 和 collection；只有 `verified: true` 才能报告成功。
-9. 用 Zotero 技能的 `children ITEM_KEY --json` 获取附件 key，再用 `file-url ATTACHMENT_KEY` 确认正式文件存在、可读且文件头为 `%PDF-`。同时回读父条目 tags 与 collections。
-10. 全部核验通过后删除本次下载的临时 PDF 和导入记录；保留 Zotero storage 中的正式附件。失败材料保留到问题定位完成，并明确报告失败阶段。
+```powershell
+python "<SKILL_DIR>\scripts\zotero_pdf.py" inspect `
+  --item-key ITEM_KEY `
+  --doi "10.xxxx/example"
+```
 
-## 分类规则
+Continue only when title, creators, DOI/stable identifier, and requested bibliography agree. On a conflict, wrong DOI/title, or ambiguous duplicate, stop without writing.
 
-标签应当可复用、粒度稳定，并能回答“这篇文献研究什么、怎样做、在哪个场景中做”。例如车辆轨迹与决策模型相关文献可使用：
+## Choose the Evidence Path
 
-- 主题：`车辆轨迹重构`
-- 模型参与：`大语言模型`、`决策模型`
-- 机制：`大语言模型参与方式/知识约束`、`大语言模型参与方式/证据诊断`
-- 评价或用途：`可解释性`、`强控制`、`实验基线`
+Use the strongest available evidence and state that level in the result:
 
-上面的标签是示例，不是固定词表。每次先查看当前文库已有标签，避免同义标签反复增殖。
+1. **PDF (`full_text`)**: Download to a temporary file, confirm the `%PDF-` header and bibliographic identity, then inspect existing PDF attachments.
+2. **HTML (`html`)**: Read the lawful article or repository HTML when no PDF is available. Classify conservatively from methods, abstract, results, and explicit claims.
+3. **Metadata (`metadata`)**: If there is neither readable full text nor HTML, classify only when a complete, reliable title, abstract, publication venue, and appropriate subject terms support the chosen tags.
+4. **No reliable evidence**: Report `not_found` or `insufficient_evidence`; do not classify.
 
-## 边界
+If a PDF already exists, verify it instead of attaching another:
 
-- 不修改论文题名、作者、DOI 等书目信息，不自动创建重复文献。
-- 不覆盖已有 PDF；发现已有附件时先报告，由用户决定是否替换。
-- 下载失败时可以尝试另一可信开放来源；没有合法可用 PDF 时如实报告。
-- Zotero 10 本地 API 写入必须遵从 Zotero 授权。低于 Zotero 10、API 不可用或授权被拒绝时停止，不尝试绕过。
-- Computer Use 用于启动、聚焦和观察 Zotero 窗口；安全与隐私授权必须由用户完成。
+```powershell
+python "<SKILL_DIR>\scripts\zotero_pdf.py" verify-attachment `
+  --item-key ITEM_KEY `
+  --attachment-key ATTACHMENT_KEY `
+  --doi "10.xxxx/example"
+```
 
-## 已验证流程
+When no PDF exists but the item should still be organized, skip attachment and continue to classification with `--evidence-level html` or `--evidence-level metadata`.
 
-- Zotero 10 本地 API 的 `attach` 已完成真实附件创建与 MD5 回读验证。
-- `inspect` 已从真实文库分页读取标签和带层级路径的 collection 词表。
-- `classify` 已完成只追加标签与 collection、版本条件写入和写入后回读验证。
-- 授权弹窗可能阻断后台 helper；需先用 Computer Use 定位窗口并完成用户授权。
+## Attach a PDF
+
+After verifying the item, legal source, local file, and absence of another PDF:
+
+```powershell
+python "<SKILL_DIR>\scripts\zotero_pdf.py" attach `
+  --item-key ITEM_KEY `
+  --pdf "C:\path\paper.pdf" `
+  --source-url "https://..." `
+  --doi "10.xxxx/example" `
+  --title "Exact Zotero title"
+```
+
+Zotero authorizes local writes through a runtime dialog. Select **Always Allow** when the user is comfortable reusing the in-process authorization; **Allow** is single-use, so a multi-step attachment may show several prompts. The helper renews once after `401`, honors bounded `429` retries, and keeps remembered keys only in process memory.
+
+`computer-use` can locate or focus Zotero and the authorization window when available. The user must make the security decision; do not click Allow, Always Allow, or Deny for them. Do not loop on a blocked dialog. Requests that need no API key, including initial local-API discovery and attachment verification, do not require Computer Use.
+
+After attachment, verify through Zotero rather than trusting the upload response:
+
+```powershell
+python "<SKILL_DIR>\scripts\zotero_pdf.py" verify-attachment `
+  --item-key ITEM_KEY `
+  --attachment-key ATTACHMENT_KEY `
+  --expected-md5 MD5_FROM_ATTACH_RESULT
+```
+
+Re-check the attachment returned by `inspect` when the attachment result does not include its key. Success requires a `%PDF-` header, a readable stored file, matching Zotero MD5, and any expected byte size. Remove the temporary download only after verification.
+
+## Classify the Item
+
+Read the current item, full library tag vocabulary, and collection hierarchy from `inspect`. Reuse existing tags and the most specific existing collection. Add usually 3–6 stable tags that identify what the paper studies, how it does it, its role or mechanism, and the relevant application. Do not infer tags from title similarity alone.
+
+Preview the additions:
+
+```powershell
+python "<SKILL_DIR>\scripts\zotero_pdf.py" classify `
+  --item-key ITEM_KEY `
+  --doi "10.xxxx/example" `
+  --evidence-level full_text `
+  --collection-name "Target collection" `
+  --tag "Research topic" `
+  --tag "Method" `
+  --tag "Method/role" `
+  --dry-run
+```
+
+The `--evidence-level` option is required so every classification result records whether it used full text, HTML, or metadata evidence. Run the same command without `--dry-run` to write. Classification is append-only: existing tags and collection memberships remain, and the helper reads the item back before returning `"verified": true`.
+
+Report success only after both operations used have passed:
+
+- PDF path: `attach` succeeded and `verify-attachment` returned `verified: true`.
+- No-PDF path: classification returned `verified: true`, with evidence level `html` or `metadata`.
+- Read-only path: no writes occurred; report the missing attachment or insufficient evidence plainly.
+
+## Authorization and Dependencies
+
+The first local **write** requires the interactive Zotero authorization dialog. Read access and attachment verification normally need no key. A headless session can use read-only commands but cannot complete the first write authorization. Zotero's local API key is valid for the editable library and is not collection-scoped; rely on the helper's DOI/title checks and append-only writes for target safety.
+
+Required:
+
+- Codex with skill support.
+- Zotero Desktop 10+ with the local API enabled and reachable at `http://127.0.0.1:23119`.
+- Python 3.10+ with its standard library.
+- Network and document retrieval capability for finding a lawful paper source.
+
+Optional:
+
+- Node.js/npm when installing through `npx skills add`.
+- `computer-use` when launching or focusing Zotero on a GUI system.
+- A separate `zotero` skill; this helper performs its own item resolution and attachment verification.
+- Zotero browser connector; it is not needed by this workflow.
+
+The local API is unauthenticated for reads. Do not expose port `23119` to other machines. If startup, authorization, API compatibility, or write verification fails, read [references/troubleshooting.md](references/troubleshooting.md) before retrying and report the exact failing stage.
